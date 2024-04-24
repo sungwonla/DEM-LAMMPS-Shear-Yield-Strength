@@ -1,0 +1,55 @@
+#LAMMPS pouring simulation to create initial configuration of grains
+
+units 		si
+dimension	3
+atom_style	sphere
+boundary	p p f
+newton		off
+comm_modify	vel yes
+
+#particle properties (varying diameters)
+variable	rho equal 2450
+variable	d equal 0.0008
+variable	err equal 0.1
+variable	dl equal $d*(1-${err})
+variable	dh equal $d*(1+${err})
+
+#creating simulation box
+variable	width equal 20*$d
+variable	height equal 100*$d
+variable    	breadth equal 5*$d
+region		reg block 0 ${width} -${breadth} ${breadth} 0 ${height} units box
+create_box	3 reg
+
+neighbor	$d bin
+neigh_modify	delay 0
+
+#inter-particle interactions
+variable	kn equal 400  # units N/m   Reduce from 400000 to 4000
+variable	kt equal ${kn}*0.5
+variable	gamman equal 4670*(9.8/$d)^0.5
+variable	gammat equal 0   #50*(9.8/$d)^0.5
+pair_style      gran/hooke/history ${kn} ${kt} ${gamman} ${gammat} 0.4 1
+pair_coeff	* *
+
+fix             1 all nve/sphere
+fix		2 all gravity 9.8 spherical 0.0 -180.0
+fix		zwalls all wall/gran hooke/history ${kn} ${kt} ${gamman} ${gammat} 0.4 1 &
+		zplane 0 NULL
+
+timestep	0.000001
+
+#pouring particles
+region          slab block 0.0 ${width} -${breadth} ${breadth} &
+                          $(0.75*v_height) $(0.95*v_height)  units box
+fix             ins all pour 15000 1 1001 vol 0.3 10 &
+	        diam range ${dl} ${dh} region slab dens ${rho} ${rho}
+
+#dumps and run
+dump		1 all custom 1000000 output-pour-*.txt id type x y z vx vy vz diameter mass
+dump		2 all image 500000 image.*.jpg type diameter zoom 1.8
+dump		3 all movie 10000 movie.mpg type diameter zoom 1.8
+run		2000000	
+
+write_restart   packing-*.restart
+write_data   	packing-*.data

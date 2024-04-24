@@ -1,0 +1,97 @@
+#LAMMPS shearing simulation
+
+units 		si
+dimension 	3
+newton		off
+boundary 	p p f
+atom_style 	sphere
+comm_modify 	mode single vel yes
+neighbor 	0.0006 nsq
+
+read_restart	packing-2000000.restart
+
+#experimental parameters
+variable	d equal 0.0008
+lattice 	sc $d
+variable	rho equal 2450 #density of middle atoms
+variable	m equal 1/6*3.14*($d)^3*v_rho    # Average mass of each grain 1.282*10^(-6) kg
+
+#altering parameters (change here)
+variable	stiffnessRatio equal 1000 #nondimensionalized Young's Modulus E/P
+variable	cohesionRatio equal 0.1 #nondimensionalized surface energy density E/(P*d)
+variable	frictionCoeff equal 0.3 #tangential friction coefficient
+
+#inter-particle interactions (JKR model for cohesion)
+variable	Pload equal 100        # top pressure
+variable	poisson equal 0.3 #Poisson's ratio
+variable	elasticM equal ${Pload}*${stiffnessRatio} #Young's Modulus
+variable	gamma equal ${Pload}*${d}*${cohesionRatio} #surface energy density
+variable	e equal 0.1 #coefficient of restitution
+variable	dampCoeff equal 10
+variable	eta equal ${dampCoeff}*((${elasticM}*${d}/${m})^0.5)
+pair_style 	granular
+pair_coeff	* * jkr ${elasticM} ${eta} ${poisson} ${gamma} tangential mindlin NULL 1.0 ${frictionCoeff}
+
+
+#defining atoms
+variable	width equal 20
+variable	length equal 10  # multiple d
+
+region		1   	block 0 100 -100 100 $(43*v_d) $(46*v_d)   units box
+group	        top     region 1
+set             group 	top    type 2 #selecting grains in the top layer
+
+region		2	block 0 100 -100 100 -100  $(3*v_d)    units box #selecting bottom layer
+group	        bottom  region 2
+set		group 	bottom type 2 #selecting grains in the bottom layer
+
+region		3       block INF INF INF INF $(3*v_d) $(43*v_d)  units box
+group	        flow  	region 3
+set		group	flow type 1 #selecting grains in the middle flowing layer
+
+region     	4    block 0 100 -100 100 $(46*v_d) $(100*v_d)   units box
+delete_atoms    region 4 #deleting the extra atoms
+
+set		type 1 density ${rho}
+set		type 2 density ${rho}
+fix             1 flow nve/sphere
+
+
+#setting moving top wall
+velocity	bottom set 0 0 0
+variable	Kappa equal 20000.0  # Keep this number above 10000
+variable	kn equal ${elasticM}*${d}
+variable	gp equal 1*(v_m*v_kn)^0.5  #parameters for wall control
+variable    	Ptop equal fcm(top,z)/(($d)^2*${width}*${length})
+variable    	Pbot equal fcm(bottom,z)/(($d)^2*${width}*${length})
+variable	inert equal 0.05              # Inertial number 0.0952
+variable	Vx equal  20*${inert}*(${Pload}/(${rho}))^0.5  
+variable	Vy equal 0.0    
+variable	Vz equal (-${Pload}*($d)^2*${width}*${length}+fcm(top,z))/${gp}  # wall control
+fix 		2 top move variable NULL NULL NULL v_Vx v_Vy v_Vz units box
+
+
+#dumps
+compute		zpos top reduce max z
+variable	zposvar equal c_zpos
+variable    	Px equal fcm(top,x)/(($d)^2*${width}*${length})
+variable    	Py equal fcm(top,y)/(($d)^2*${width}*${length})
+fix 		topz top print 500 "${zposvar}" append zpos.txt
+fix 		force1 top print 500 "${Ptop}" append pz.txt
+fix 		force2 top print 500 "${Px}" append px.txt
+fix 		force3 top print 500 "${Py}" append py.txt
+
+dump		2 all image 100000 image.*.jpg type diameter zoom 1.8 size 600 1024
+dump_modify	2 pad 5
+
+dump		3 all movie 500 movie.mpg type diameter zoom 1.8 size 600 1024
+dump_modify	3 pad 50
+
+
+#run
+variable	tauc equal (3.14^2+(ln($e))^2)^0.5*($m/4/v_kn)^0.5 
+timestep	$(v_tauc*0.01)  # Using a timestep of 1% tauc
+
+run   		500000
+write_restart	shearing-*.restart
+write_data	shearing-*.data
